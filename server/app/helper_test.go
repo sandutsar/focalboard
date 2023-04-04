@@ -10,6 +10,9 @@ import (
 	"github.com/mattermost/focalboard/server/auth"
 	"github.com/mattermost/focalboard/server/services/config"
 	"github.com/mattermost/focalboard/server/services/metrics"
+	"github.com/mattermost/focalboard/server/services/permissions/mmpermissions"
+	mmpermissionsMocks "github.com/mattermost/focalboard/server/services/permissions/mmpermissions/mocks"
+	permissionsMocks "github.com/mattermost/focalboard/server/services/permissions/mocks"
 	"github.com/mattermost/focalboard/server/services/store/mockstore"
 	"github.com/mattermost/focalboard/server/services/webhook"
 	"github.com/mattermost/focalboard/server/ws"
@@ -19,42 +22,53 @@ import (
 )
 
 type TestHelper struct {
-	App    *App
-	Store  *mockstore.MockStore
-	logger *mlog.Logger
+	App          *App
+	Store        *mockstore.MockStore
+	FilesBackend *mocks.FileBackend
+	logger       mlog.LoggerIFace
+	API          *mmpermissionsMocks.MockAPI
 }
 
 func SetupTestHelper(t *testing.T) (*TestHelper, func()) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 	cfg := config.Configuration{}
 	store := mockstore.NewMockStore(ctrl)
-	auth := auth.New(&cfg, store)
+	filesBackend := &mocks.FileBackend{}
+	auth := auth.New(&cfg, store, nil)
 	logger := mlog.CreateConsoleTestLogger(false, mlog.LvlDebug)
 	sessionToken := "TESTTOKEN"
-	wsserver := ws.NewServer(auth, sessionToken, false, logger)
+	wsserver := ws.NewServer(auth, sessionToken, false, logger, store)
 	webhook := webhook.NewClient(&cfg, logger)
 	metricsService := metrics.NewMetrics(metrics.InstanceInfo{})
 
+	mockStore := permissionsMocks.NewMockStore(ctrl)
+	mockAPI := mmpermissionsMocks.NewMockAPI(ctrl)
+	permissions := mmpermissions.New(mockStore, mockAPI, mlog.CreateConsoleTestLogger(true, mlog.LvlError))
+
 	appServices := Services{
-		Auth:         auth,
-		Store:        store,
-		FilesBackend: &mocks.FileBackend{},
-		Webhook:      webhook,
-		Metrics:      metricsService,
-		Logger:       logger,
+		Auth:             auth,
+		Store:            store,
+		FilesBackend:     filesBackend,
+		Webhook:          webhook,
+		Metrics:          metricsService,
+		Logger:           logger,
+		SkipTemplateInit: true,
+		Permissions:      permissions,
 	}
 	app2 := New(&cfg, wsserver, appServices)
 
 	tearDown := func() {
+		app2.Shutdown()
 		if logger != nil {
 			_ = logger.Shutdown()
 		}
 	}
 
 	return &TestHelper{
-		App:    app2,
-		Store:  store,
-		logger: logger,
+		App:          app2,
+		Store:        store,
+		FilesBackend: filesBackend,
+		logger:       logger,
+		API:          mockAPI,
 	}, tearDown
 }

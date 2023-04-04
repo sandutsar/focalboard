@@ -13,33 +13,39 @@ import {MarkdownEditor} from '../markdownEditor'
 
 import {IUser} from '../../user'
 import {getMe} from '../../store/users'
+import {useHasCurrentBoardPermissions} from '../../hooks/permissions'
+import {Permission} from '../../constants'
+
+import AddCommentTourStep from '../onboardingTour/addComments/addComments'
 
 import Comment from './comment'
+
 import './commentsList.scss'
 
 type Props = {
     comments: readonly CommentBlock[]
-    rootId: string
+    boardId: string
     cardId: string
     readonly: boolean
 }
 
-const CommentsList = React.memo((props: Props) => {
+const CommentsList = (props: Props) => {
     const [newComment, setNewComment] = useState('')
     const me = useAppSelector<IUser|null>(getMe)
+    const canDeleteOthersComments = useHasCurrentBoardPermissions([Permission.DeleteOthersComments])
 
     const onSendClicked = () => {
         const commentText = newComment
         if (commentText) {
-            const {rootId, cardId} = props
+            const {cardId, boardId} = props
             Utils.log(`Send comment: ${commentText}`)
             Utils.assertValue(cardId)
 
             const comment = createCommentBlock()
             comment.parentId = cardId
-            comment.rootId = rootId
+            comment.boardId = boardId
             comment.title = commentText
-            mutator.insertBlock(comment, 'add comment')
+            mutator.insertBlock(boardId, comment, 'add comment')
             setNewComment('')
         }
     }
@@ -75,6 +81,8 @@ const CommentsList = React.memo((props: Props) => {
                 />
             </Button>
             }
+
+            <AddCommentTourStep/>
         </div>
     )
 
@@ -83,20 +91,25 @@ const CommentsList = React.memo((props: Props) => {
             {/* New comment */}
             {!props.readonly && newCommentComponent}
 
-            {comments.slice(0).reverse().map((comment) => (
-                <Comment
-                    key={comment.id}
-                    comment={comment}
-                    userImageUrl={Utils.getProfilePicture(comment.modifiedBy)}
-                    userId={comment.modifiedBy}
-                    readonly={props.readonly}
-                />
-            ))}
+            {comments.slice(0).reverse().map((comment) => {
+                // Only modify _own_ comments, EXCEPT for Admins, which can delete _any_ comment
+                // NOTE: editing comments will exist in the future (in addition to deleting)
+                const canDeleteComment: boolean = canDeleteOthersComments || me?.id === comment.modifiedBy
+                return (
+                    <Comment
+                        key={comment.id}
+                        comment={comment}
+                        userImageUrl={Utils.getProfilePicture(comment.modifiedBy)}
+                        userId={comment.modifiedBy}
+                        readonly={props.readonly || !canDeleteComment}
+                    />
+                )
+            })}
 
             {/* horizontal divider below comments */}
             {!(comments.length === 0 && props.readonly) && <hr className='CommentsList__divider'/>}
         </div>
     )
-})
+}
 
-export default CommentsList
+export default React.memo(CommentsList)

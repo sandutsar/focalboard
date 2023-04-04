@@ -8,7 +8,7 @@ import {Provider as ReduxProvider} from 'react-redux'
 
 import userEvent from '@testing-library/user-event'
 
-import {mocked} from 'ts-jest/utils'
+import {mocked} from 'jest-mock'
 
 import {MockStoreEnhanced} from 'redux-mock-store'
 
@@ -32,7 +32,7 @@ describe('src/components/gallery/GalleryCard', () => {
     const mockedMutator = mocked(mutator, true)
     const mockedUtils = mocked(Utils, true)
     const mockedOcto = mocked(octoClient, true)
-    mockedOcto.getFileAsDataUrl.mockResolvedValue('test.jpg')
+    mockedOcto.getFileAsDataUrl.mockResolvedValue({url: 'test.jpg'})
 
     const board = TestBlockFactory.createBoard()
     board.id = 'boardId'
@@ -50,7 +50,7 @@ describe('src/components/gallery/GalleryCard', () => {
     const contentComment = TestBlockFactory.createComment(card)
     contentComment.id = 'contentId-Comment'
 
-    let store:MockStoreEnhanced<unknown, unknown>
+    let store: MockStoreEnhanced<unknown, unknown>
 
     beforeEach(() => {
         jest.clearAllMocks()
@@ -68,8 +68,28 @@ describe('src/components/gallery/GalleryCard', () => {
                         [card.id]: card,
                     },
                 },
+                teams: {
+                    current: {id: 'team-id'},
+                },
+                boards: {
+                    current: board.id,
+                    boards: {
+                        [board.id]: board,
+                    },
+                    templates: [],
+                    myBoardMemberships: {
+                        [board.id]: {userId: 'user_id_1', schemeAdmin: true},
+                    },
+                },
                 comments: {
                     comments: {},
+                    commentsByCard: {},
+                },
+                users: {
+                    me: {
+                        id: 'user_id_1',
+                        props: {},
+                    },
                 },
             }
             store = mockStateStore([], state)
@@ -139,8 +159,6 @@ describe('src/components/gallery/GalleryCard', () => {
             const buttonDelete = screen.getByRole('button', {name: 'Delete'})
             userEvent.click(buttonDelete)
             expect(container).toMatchSnapshot()
-            expect(mockedMutator.deleteBlock).toBeCalledTimes(1)
-            expect(mockedMutator.deleteBlock).toBeCalledWith(card, 'delete card')
         })
 
         test('return GalleryCard and duplicate card', () => {
@@ -166,7 +184,7 @@ describe('src/components/gallery/GalleryCard', () => {
             userEvent.click(buttonDuplicate)
             expect(container).toMatchSnapshot()
             expect(mockedMutator.duplicateCard).toBeCalledTimes(1)
-            expect(mockedMutator.duplicateCard).toBeCalledWith(card.id, board)
+            expect(mockedMutator.duplicateCard).toBeCalledWith(card.id, board.id)
         })
         test('return GalleryCard and copy link', () => {
             const {container} = render(wrapDNDIntl(
@@ -224,6 +242,9 @@ describe('src/components/gallery/GalleryCard', () => {
                     contents: {
                         [contentImage.id]: contentImage,
                     },
+                    contentsByCard: {
+                        [card.id]: [contentImage],
+                    },
                 },
                 cards: {
                     cards: {
@@ -232,6 +253,26 @@ describe('src/components/gallery/GalleryCard', () => {
                 },
                 comments: {
                     comments: {},
+                    commentsByCard: {},
+                },
+                teams: {
+                    current: {id: 'team-id'},
+                },
+                boards: {
+                    current: board.id,
+                    boards: {
+                        [board.id]: board,
+                    },
+                    templates: [],
+                    myBoardMemberships: {
+                        [board.id]: {userId: 'user_id_1', schemeAdmin: true},
+                    },
+                },
+                users: {
+                    me: {
+                        id: 'user_id_1',
+                        props: {},
+                    },
                 },
             }
             store = mockStateStore([], state)
@@ -273,6 +314,9 @@ describe('src/components/gallery/GalleryCard', () => {
                         [contentImage.id]: [contentImage],
                         [contentImage2.id]: [contentImage2],
                     },
+                    contentsByCard: {
+                        [card.id]: [contentImage, contentImage2],
+                    },
                 },
                 cards: {
                     cards: {
@@ -281,6 +325,26 @@ describe('src/components/gallery/GalleryCard', () => {
                 },
                 comments: {
                     comments: {},
+                    commentsByCard: {},
+                },
+                teams: {
+                    current: {id: 'team-id'},
+                },
+                boards: {
+                    current: board.id,
+                    boards: {
+                        [board.id]: board,
+                    },
+                    templates: [],
+                    myBoardMemberships: {
+                        [board.id]: {userId: 'user_id_1', schemeAdmin: true},
+                    },
+                },
+                users: {
+                    me: {
+                        id: 'user_id_1',
+                        props: {},
+                    },
                 },
             }
             store = mockStateStore([], state)
@@ -317,6 +381,9 @@ describe('src/components/gallery/GalleryCard', () => {
                     contents: {
                         [contentComment.id]: contentComment,
                     },
+                    contentsByCard: {
+                        [card.id]: [contentComment],
+                    },
                 },
                 cards: {
                     cards: {
@@ -325,6 +392,26 @@ describe('src/components/gallery/GalleryCard', () => {
                 },
                 comments: {
                     comments: {},
+                    commentsByCard: {},
+                },
+                teams: {
+                    current: {id: 'team-id'},
+                },
+                boards: {
+                    current: board.id,
+                    boards: {
+                        [board.id]: board,
+                    },
+                    templates: [],
+                    myBoardMemberships: {
+                        [board.id]: {userId: 'user_id_1', schemeAdmin: true},
+                    },
+                },
+                users: {
+                    me: {
+                        id: 'user_id_1',
+                        props: {},
+                    },
                 },
             }
             store = mockStateStore([], state)
@@ -380,6 +467,9 @@ describe('src/components/gallery/GalleryCard', () => {
                     contents: {
                         [contentComment.id]: [contentComment, contentDivider],
                     },
+                    contentsByCard: {
+                        [card.id]: [contentComment, contentDivider],
+                    },
                 },
                 cards: {
                     cards: {
@@ -388,6 +478,26 @@ describe('src/components/gallery/GalleryCard', () => {
                 },
                 comments: {
                     comments: {},
+                    commentsByCard: {},
+                },
+                teams: {
+                    current: {id: 'team-id'},
+                },
+                boards: {
+                    current: board.id,
+                    boards: {
+                        [board.id]: board,
+                    },
+                    templates: [],
+                    myBoardMemberships: {
+                        [board.id]: {userId: 'user_id_1', schemeAdmin: true},
+                    },
+                },
+                users: {
+                    me: {
+                        id: 'user_id_1',
+                        props: {},
+                    },
                 },
             }
             store = mockStateStore([], state)

@@ -21,7 +21,7 @@ import (
 const (
 	// card change notifications.
 	defAddCardNotify    = "{{.Authors | printAuthors \"unknown_user\" }} has added the card {{. | makeLink}}\n"
-	defModifyCardNotify = "###### {{.Authors | printAuthors \"unknown_user\" }} has modified the card {{. | makeLink}}\n"
+	defModifyCardNotify = "###### {{.Authors | printAuthors \"unknown_user\" }} has modified the card {{. | makeLink}} on the board {{. | makeBoardLink}}\n"
 	defDeleteCardNotify = "{{.Authors | printAuthors \"unknown_user\" }} has deleted the card {{. | makeLink}}\n"
 )
 
@@ -33,9 +33,10 @@ var (
 
 // DiffConvOpts provides options when converting diffs to slack attachments.
 type DiffConvOpts struct {
-	Language     string
-	MakeCardLink func(block *model.Block, board *model.Block, card *model.Block) string
-	Logger       *mlog.Logger
+	Language      string
+	MakeCardLink  func(block *model.Block, board *model.Board, card *model.Block) string
+	MakeBoardLink func(board *model.Board) string
+	Logger        mlog.LoggerIFace
 }
 
 // getTemplate returns a new or cached named template based on the language specified.
@@ -49,14 +50,23 @@ func getTemplate(name string, opts DiffConvOpts, def string) (*template.Template
 		t = template.New(key)
 
 		if opts.MakeCardLink == nil {
-			opts.MakeCardLink = func(block *model.Block, _ *model.Block, _ *model.Block) string {
+			opts.MakeCardLink = func(block *model.Block, _ *model.Board, _ *model.Block) string {
 				return fmt.Sprintf("`%s`", block.Title)
+			}
+		}
+
+		if opts.MakeBoardLink == nil {
+			opts.MakeBoardLink = func(board *model.Board) string {
+				return fmt.Sprintf("`%s`", board.Title)
 			}
 		}
 		myFuncs := template.FuncMap{
 			"getBoardDescription": getBoardDescription,
 			"makeLink": func(diff *Diff) string {
 				return opts.MakeCardLink(diff.NewBlock, diff.Board, diff.Card)
+			},
+			"makeBoardLink": func(diff *Diff) string {
+				return opts.MakeBoardLink(diff.Board)
 			},
 			"stripNewlines": func(s string) string {
 				return strings.TrimSpace(strings.ReplaceAll(s, "\n", "¶ "))
@@ -160,6 +170,7 @@ func cardDiff2SlackAttachment(cardDiff *Diff, opts DiffConvOpts) (*mm_model.Slac
 		mlog.String("card_id", cardDiff.Card.ID),
 		mlog.String("new_block_id", cardDiff.NewBlock.ID),
 		mlog.String("old_block_id", cardDiff.OldBlock.ID),
+		mlog.Int("childDiffs", len(cardDiff.Diffs)),
 	)
 
 	buf.Reset()
@@ -170,93 +181,186 @@ func cardDiff2SlackAttachment(cardDiff *Diff, opts DiffConvOpts) (*mm_model.Slac
 	attachment.Fallback = attachment.Pretext
 
 	// title changes
-	if cardDiff.NewBlock.Title != cardDiff.OldBlock.Title {
-		attachment.Fields = append(attachment.Fields, &mm_model.SlackAttachmentField{
-			Short: false,
-			Title: "Title",
-			Value: fmt.Sprintf("%s  ~~`%s`~~", stripNewlines(cardDiff.NewBlock.Title), stripNewlines(cardDiff.OldBlock.Title)),
-		})
-	}
+	attachment.Fields = appendTitleChanges(attachment.Fields, cardDiff)
 
 	// property changes
-	if len(cardDiff.PropDiffs) > 0 {
-		for _, propDiff := range cardDiff.PropDiffs {
-			if propDiff.NewValue == propDiff.OldValue {
-				continue
-			}
-
-			var val string
-			if propDiff.OldValue != "" {
-				val = fmt.Sprintf("%s  ~~`%s`~~", stripNewlines(propDiff.NewValue), stripNewlines(propDiff.OldValue))
-			} else {
-				val = propDiff.NewValue
-			}
-
-			attachment.Fields = append(attachment.Fields, &mm_model.SlackAttachmentField{
-				Short: false,
-				Title: propDiff.Name,
-				Value: val,
-			})
-		}
-	}
+	attachment.Fields = appendPropertyChanges(attachment.Fields, cardDiff)
 
 	// comment add/delete
-	for _, child := range cardDiff.Diffs {
-		if child.BlockType == model.TypeComment {
-			var format string
-			var block *model.Block
-			if child.NewBlock != nil && child.OldBlock == nil {
-				// added comment
-				format = "%s"
-				block = child.NewBlock
-			}
+	attachment.Fields = appendCommentChanges(attachment.Fields, cardDiff)
 
-			if child.NewBlock == nil && child.OldBlock != nil {
-				// deleted comment
-				format = "~~`%s`~~"
-				block = child.OldBlock
-			}
-
-			if format != "" {
-				attachment.Fields = append(attachment.Fields, &mm_model.SlackAttachmentField{
-					Short: false,
-					Title: "Comment by " + makeAuthorsList(child.Authors, "unknown_user"), // todo:  localize this when server has i18n
-					Value: fmt.Sprintf(format, stripNewlines(block.Title)),
-				})
-			}
-		}
-	}
+	// File Attachment add/delete
+	attachment.Fields = appendAttachmentChanges(attachment.Fields, cardDiff)
 
 	// content/description changes
-	for _, child := range cardDiff.Diffs {
-		if child.BlockType != model.TypeComment {
-			var newTitle, oldTitle string
-			if child.NewBlock != nil {
-				newTitle = stripNewlines(child.NewBlock.Title)
-			}
-			if child.OldBlock != nil {
-				oldTitle = stripNewlines(child.OldBlock.Title)
-			}
-
-			if newTitle == oldTitle {
-				continue
-			}
-
-			markdown := generateMarkdownDiff(oldTitle, newTitle, opts.Logger)
-			if markdown == "" {
-				continue
-			}
-
-			attachment.Fields = append(attachment.Fields, &mm_model.SlackAttachmentField{
-				Short: false,
-				Title: "Description",
-				Value: markdown,
-			})
-		}
-	}
+	attachment.Fields = appendContentChanges(attachment.Fields, cardDiff, opts.Logger)
 
 	if len(attachment.Fields) == 0 {
 		return nil, nil
 	}
 	return attachment, nil
+}
+
+func appendTitleChanges(fields []*mm_model.SlackAttachmentField, cardDiff *Diff) []*mm_model.SlackAttachmentField {
+	if cardDiff.NewBlock.Title != cardDiff.OldBlock.Title {
+		fields = append(fields, &mm_model.SlackAttachmentField{
+			Short: false,
+			Title: "Title",
+			Value: fmt.Sprintf("%s  ~~`%s`~~", stripNewlines(cardDiff.NewBlock.Title), stripNewlines(cardDiff.OldBlock.Title)),
+		})
+	}
+	return fields
+}
+
+func appendPropertyChanges(fields []*mm_model.SlackAttachmentField, cardDiff *Diff) []*mm_model.SlackAttachmentField {
+	if len(cardDiff.PropDiffs) == 0 {
+		return fields
+	}
+
+	for _, propDiff := range cardDiff.PropDiffs {
+		if propDiff.NewValue == propDiff.OldValue {
+			continue
+		}
+
+		var val string
+		if propDiff.OldValue != "" {
+			val = fmt.Sprintf("%s  ~~`%s`~~", stripNewlines(propDiff.NewValue), stripNewlines(propDiff.OldValue))
+		} else {
+			val = propDiff.NewValue
+		}
+
+		fields = append(fields, &mm_model.SlackAttachmentField{
+			Short: false,
+			Title: propDiff.Name,
+			Value: val,
+		})
+	}
+	return fields
+}
+
+func appendCommentChanges(fields []*mm_model.SlackAttachmentField, cardDiff *Diff) []*mm_model.SlackAttachmentField {
+	for _, child := range cardDiff.Diffs {
+		if child.BlockType == model.TypeComment {
+			var format string
+			var msg string
+			if child.NewBlock != nil && child.OldBlock == nil {
+				// added comment
+				format = "%s"
+				msg = child.NewBlock.Title
+			}
+
+			if (child.NewBlock == nil || child.NewBlock.DeleteAt != 0) && child.OldBlock != nil {
+				// deleted comment
+				format = "~~`%s`~~"
+				msg = stripNewlines(child.OldBlock.Title)
+			}
+
+			if format != "" {
+				fields = append(fields, &mm_model.SlackAttachmentField{
+					Short: false,
+					Title: "Comment by " + makeAuthorsList(child.Authors, "unknown_user"), // todo:  localize this when server has i18n
+					Value: fmt.Sprintf(format, msg),
+				})
+			}
+		}
+	}
+	return fields
+}
+
+func appendAttachmentChanges(fields []*mm_model.SlackAttachmentField, cardDiff *Diff) []*mm_model.SlackAttachmentField {
+	for _, child := range cardDiff.Diffs {
+		if child.BlockType == model.TypeAttachment {
+			var format string
+			var msg string
+			if child.NewBlock != nil && child.OldBlock == nil {
+				format = "Added an attachment: **`%s`**"
+				msg = child.NewBlock.Title
+			} else {
+				format = "Removed ~~`%s`~~ attachment"
+				msg = stripNewlines(child.OldBlock.Title)
+			}
+
+			if format != "" {
+				fields = append(fields, &mm_model.SlackAttachmentField{
+					Short: false,
+					Title: "Changed by " + makeAuthorsList(child.Authors, "unknown_user"), // TODO:  localize this when server has i18n
+					Value: fmt.Sprintf(format, msg),
+				})
+			}
+		}
+	}
+	return fields
+}
+
+func appendContentChanges(fields []*mm_model.SlackAttachmentField, cardDiff *Diff, logger mlog.LoggerIFace) []*mm_model.SlackAttachmentField {
+	for _, child := range cardDiff.Diffs {
+		var opAdd, opDelete bool
+		var opString string
+
+		switch {
+		case child.OldBlock == nil && child.NewBlock != nil:
+			opAdd = true
+			opString = "added" // TODO: localize when i18n added to server
+		case child.NewBlock == nil || child.NewBlock.DeleteAt != 0:
+			opDelete = true
+			opString = "deleted"
+		default:
+			opString = "modified"
+		}
+
+		var newTitle, oldTitle string
+		if child.OldBlock != nil {
+			oldTitle = child.OldBlock.Title
+		}
+		if child.NewBlock != nil {
+			newTitle = child.NewBlock.Title
+		}
+
+		switch child.BlockType {
+		case model.TypeDivider, model.TypeComment:
+			// do nothing
+			continue
+		case model.TypeImage:
+			if newTitle == "" {
+				newTitle = "An image was " + opString + "." // TODO: localize when i18n added to server
+			}
+			oldTitle = ""
+		case model.TypeAttachment:
+			if newTitle == "" {
+				newTitle = "A file attachment was " + opString + "." // TODO: localize when i18n added to server
+			}
+			oldTitle = ""
+		default:
+			if !opAdd {
+				if opDelete {
+					newTitle = ""
+				}
+				// only strip newlines when modifying or deleting
+				oldTitle = stripNewlines(oldTitle)
+				newTitle = stripNewlines(newTitle)
+			}
+			if newTitle == oldTitle {
+				continue
+			}
+		}
+
+		logger.Trace("appendContentChanges",
+			mlog.String("type", string(child.BlockType)),
+			mlog.String("opString", opString),
+			mlog.String("oldTitle", oldTitle),
+			mlog.String("newTitle", newTitle),
+		)
+
+		markdown := generateMarkdownDiff(oldTitle, newTitle, logger)
+		if markdown == "" {
+			continue
+		}
+
+		fields = append(fields, &mm_model.SlackAttachmentField{
+			Short: false,
+			Title: "Description",
+			Value: markdown,
+		})
+	}
+	return fields
 }

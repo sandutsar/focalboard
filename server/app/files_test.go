@@ -1,27 +1,37 @@
 package app
 
 import (
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
+
+	mmModel "github.com/mattermost/mattermost-server/v6/model"
 	"github.com/mattermost/mattermost-server/v6/plugin/plugintest/mock"
 	"github.com/mattermost/mattermost-server/v6/shared/filestore"
 	"github.com/mattermost/mattermost-server/v6/shared/filestore/mocks"
-	"github.com/stretchr/testify/assert"
 )
 
 const (
 	testFileName = "temp-file-name"
-	testRootID   = "test-root-id"
-	testFilePath = "1/test-root-id/temp-file-name"
+	testBoardID  = "test-board-id"
 )
+
+var errDummy = errors.New("hello")
 
 type TestError struct{}
 
 func (err *TestError) Error() string { return "Mocked File backend error" }
 
 func TestGetFileReader(t *testing.T) {
+	testFilePath := filepath.Join("1", "test-board-id", "temp-file-name")
+
 	th, _ := SetupTestHelper(t)
 	mockedReadCloseSeek := &mocks.ReadCloseSeeker{}
 	t.Run("should get file reader from filestore successfully", func(t *testing.T) {
@@ -45,7 +55,7 @@ func TestGetFileReader(t *testing.T) {
 
 		mockedFileBackend.On("Reader", testFilePath).Return(readerFunc, readerErrorFunc)
 		mockedFileBackend.On("FileExists", testFilePath).Return(fileExistsFunc, fileExistsErrorFunc)
-		actual, _ := th.App.GetFileReader("1", testRootID, testFileName)
+		actual, _ := th.App.GetFileReader("1", testBoardID, testFileName)
 		assert.Equal(t, mockedReadCloseSeek, actual)
 	})
 
@@ -71,7 +81,7 @@ func TestGetFileReader(t *testing.T) {
 
 		mockedFileBackend.On("Reader", testFilePath).Return(readerFunc, readerErrorFunc)
 		mockedFileBackend.On("FileExists", testFilePath).Return(fileExistsFunc, fileExistsErrorFunc)
-		actual, err := th.App.GetFileReader("1", testRootID, testFileName)
+		actual, err := th.App.GetFileReader("1", testBoardID, testFileName)
 		assert.Error(t, err, mockedError)
 		assert.Nil(t, actual)
 	})
@@ -98,13 +108,13 @@ func TestGetFileReader(t *testing.T) {
 
 		mockedFileBackend.On("Reader", testFilePath).Return(readerFunc, readerErrorFunc)
 		mockedFileBackend.On("FileExists", testFilePath).Return(fileExistsFunc, fileExistsErrorFunc)
-		actual, err := th.App.GetFileReader("1", testRootID, testFileName)
+		actual, err := th.App.GetFileReader("1", testBoardID, testFileName)
 		assert.Error(t, err, mockedError)
 		assert.Nil(t, actual)
 	})
 
 	t.Run("should move file from old filepath to new filepath, if file doesnot exists in new filepath and workspace id is 0", func(t *testing.T) {
-		filePath := "0/test-root-id/temp-file-name"
+		filePath := filepath.Join("0", "test-board-id", "temp-file-name")
 		workspaceid := "0"
 		mockedFileBackend := &mocks.FileBackend{}
 		th.App.filesBackend = mockedFileBackend
@@ -134,12 +144,12 @@ func TestGetFileReader(t *testing.T) {
 		mockedFileBackend.On("MoveFile", testFileName, filePath).Return(moveFileFunc)
 		mockedFileBackend.On("Reader", filePath).Return(readerFunc, readerErrorFunc)
 
-		actual, _ := th.App.GetFileReader(workspaceid, testRootID, testFileName)
+		actual, _ := th.App.GetFileReader(workspaceid, testBoardID, testFileName)
 		assert.Equal(t, mockedReadCloseSeek, actual)
 	})
 
 	t.Run("should return file reader, if file doesnot exists in new filepath and old file path", func(t *testing.T) {
-		filePath := "0/test-root-id/temp-file-name"
+		filePath := filepath.Join("0", "test-board-id", "temp-file-name")
 		fileName := testFileName
 		workspaceid := "0"
 		mockedFileBackend := &mocks.FileBackend{}
@@ -170,7 +180,7 @@ func TestGetFileReader(t *testing.T) {
 		mockedFileBackend.On("MoveFile", fileName, filePath).Return(moveFileFunc)
 		mockedFileBackend.On("Reader", filePath).Return(readerFunc, readerErrorFunc)
 
-		actual, _ := th.App.GetFileReader(workspaceid, testRootID, testFileName)
+		actual, _ := th.App.GetFileReader(workspaceid, testBoardID, testFileName)
 		assert.Equal(t, mockedReadCloseSeek, actual)
 	})
 }
@@ -182,11 +192,12 @@ func TestSaveFile(t *testing.T) {
 		fileName := "temp-file-name.txt"
 		mockedFileBackend := &mocks.FileBackend{}
 		th.App.filesBackend = mockedFileBackend
+		th.Store.EXPECT().SaveFileInfo(gomock.Any()).Return(nil)
 
 		writeFileFunc := func(reader io.Reader, path string) int64 {
-			paths := strings.Split(path, "/")
-			assert.Equal(t, "1", paths[0])
-			assert.Equal(t, testRootID, paths[1])
+			paths := strings.Split(path, string(os.PathSeparator))
+			assert.Equal(t, "boards", paths[0])
+			assert.Equal(t, time.Now().Format("20060102"), paths[1])
 			fileName = paths[2]
 			return int64(10)
 		}
@@ -196,7 +207,7 @@ func TestSaveFile(t *testing.T) {
 		}
 
 		mockedFileBackend.On("WriteFile", mockedReadCloseSeek, mock.Anything).Return(writeFileFunc, writeFileErrorFunc)
-		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", testRootID, fileName)
+		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", testBoardID, fileName)
 		assert.Equal(t, fileName, actual)
 		assert.Nil(t, err)
 	})
@@ -205,11 +216,12 @@ func TestSaveFile(t *testing.T) {
 		fileName := "temp-file-name.jpeg"
 		mockedFileBackend := &mocks.FileBackend{}
 		th.App.filesBackend = mockedFileBackend
+		th.Store.EXPECT().SaveFileInfo(gomock.Any()).Return(nil)
 
 		writeFileFunc := func(reader io.Reader, path string) int64 {
-			paths := strings.Split(path, "/")
-			assert.Equal(t, "1", paths[0])
-			assert.Equal(t, "test-root-id", paths[1])
+			paths := strings.Split(path, string(os.PathSeparator))
+			assert.Equal(t, "boards", paths[0])
+			assert.Equal(t, time.Now().Format("20060102"), paths[1])
 			assert.Equal(t, "jpg", strings.Split(paths[2], ".")[1])
 			return int64(10)
 		}
@@ -219,7 +231,7 @@ func TestSaveFile(t *testing.T) {
 		}
 
 		mockedFileBackend.On("WriteFile", mockedReadCloseSeek, mock.Anything).Return(writeFileFunc, writeFileErrorFunc)
-		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", "test-root-id", fileName)
+		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", "test-board-id", fileName)
 		assert.Nil(t, err)
 		assert.NotNil(t, actual)
 	})
@@ -231,9 +243,9 @@ func TestSaveFile(t *testing.T) {
 		mockedError := &TestError{}
 
 		writeFileFunc := func(reader io.Reader, path string) int64 {
-			paths := strings.Split(path, "/")
-			assert.Equal(t, "1", paths[0])
-			assert.Equal(t, "test-root-id", paths[1])
+			paths := strings.Split(path, string(os.PathSeparator))
+			assert.Equal(t, "boards", paths[0])
+			assert.Equal(t, time.Now().Format("20060102"), paths[1])
 			assert.Equal(t, "jpg", strings.Split(paths[2], ".")[1])
 			return int64(10)
 		}
@@ -243,8 +255,130 @@ func TestSaveFile(t *testing.T) {
 		}
 
 		mockedFileBackend.On("WriteFile", mockedReadCloseSeek, mock.Anything).Return(writeFileFunc, writeFileErrorFunc)
-		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", "test-root-id", fileName)
+		actual, err := th.App.SaveFile(mockedReadCloseSeek, "1", "test-board-id", fileName)
 		assert.Equal(t, "", actual)
 		assert.Equal(t, "unable to store the file in the files storage: Mocked File backend error", err.Error())
+	})
+}
+
+func TestGetFileInfo(t *testing.T) {
+	th, _ := SetupTestHelper(t)
+
+	t.Run("should return file info", func(t *testing.T) {
+		fileInfo := &mmModel.FileInfo{
+			Id:       "file_info_id",
+			Archived: false,
+		}
+
+		th.Store.EXPECT().GetFileInfo("filename").Return(fileInfo, nil).Times(2)
+
+		fetchedFileInfo, err := th.App.GetFileInfo("Afilename")
+		assert.NoError(t, err)
+		assert.Equal(t, "file_info_id", fetchedFileInfo.Id)
+		assert.False(t, fetchedFileInfo.Archived)
+
+		fetchedFileInfo, err = th.App.GetFileInfo("Afilename.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "file_info_id", fetchedFileInfo.Id)
+		assert.False(t, fetchedFileInfo.Archived)
+	})
+
+	t.Run("should return archived file info", func(t *testing.T) {
+		fileInfo := &mmModel.FileInfo{
+			Id:       "file_info_id",
+			Archived: true,
+		}
+
+		th.Store.EXPECT().GetFileInfo("filename").Return(fileInfo, nil)
+
+		fetchedFileInfo, err := th.App.GetFileInfo("Afilename")
+		assert.NoError(t, err)
+		assert.Equal(t, "file_info_id", fetchedFileInfo.Id)
+		assert.True(t, fetchedFileInfo.Archived)
+	})
+
+	t.Run("should return archived file infoerror", func(t *testing.T) {
+		th.Store.EXPECT().GetFileInfo("filename").Return(nil, errDummy)
+
+		fetchedFileInfo, err := th.App.GetFileInfo("Afilename")
+		assert.Error(t, err)
+		assert.Nil(t, fetchedFileInfo)
+	})
+}
+
+func TestGetFile(t *testing.T) {
+	th, _ := SetupTestHelper(t)
+
+	t.Run("when FileInfo exists", func(t *testing.T) {
+		th.Store.EXPECT().GetFileInfo("fileInfoID").Return(&mmModel.FileInfo{
+			Id:   "fileInfoID",
+			Path: "/path/to/file/fileName.txt",
+		}, nil)
+
+		mockedFileBackend := &mocks.FileBackend{}
+		th.App.filesBackend = mockedFileBackend
+		mockedReadCloseSeek := &mocks.ReadCloseSeeker{}
+		readerFunc := func(path string) filestore.ReadCloseSeeker {
+			return mockedReadCloseSeek
+		}
+
+		readerErrorFunc := func(path string) error {
+			return nil
+		}
+		mockedFileBackend.On("Reader", "/path/to/file/fileName.txt").Return(readerFunc, readerErrorFunc)
+		mockedFileBackend.On("FileExists", "/path/to/file/fileName.txt").Return(true, nil)
+
+		fileInfo, seeker, err := th.App.GetFile("teamID", "boardID", "7fileInfoID.txt")
+		assert.NoError(t, err)
+		assert.NotNil(t, fileInfo)
+		assert.NotNil(t, seeker)
+	})
+
+	t.Run("when FileInfo doesn't exist", func(t *testing.T) {
+		th.Store.EXPECT().GetFileInfo("fileInfoID").Return(nil, nil)
+
+		mockedFileBackend := &mocks.FileBackend{}
+		th.App.filesBackend = mockedFileBackend
+		mockedReadCloseSeek := &mocks.ReadCloseSeeker{}
+		readerFunc := func(path string) filestore.ReadCloseSeeker {
+			return mockedReadCloseSeek
+		}
+
+		readerErrorFunc := func(path string) error {
+			return nil
+		}
+
+		mockedFileBackend.On("Reader", "teamID/boardID/7fileInfoID.txt").Return(readerFunc, readerErrorFunc)
+		mockedFileBackend.On("FileExists", "teamID/boardID/7fileInfoID.txt").Return(true, nil)
+
+		fileInfo, seeker, err := th.App.GetFile("teamID", "boardID", "7fileInfoID.txt")
+		assert.NoError(t, err)
+		assert.Nil(t, fileInfo)
+		assert.NotNil(t, seeker)
+	})
+
+	t.Run("when FileInfo exists but FileInfo.Path is not set", func(t *testing.T) {
+		th.Store.EXPECT().GetFileInfo("fileInfoID").Return(&mmModel.FileInfo{
+			Id:   "fileInfoID",
+			Path: "",
+		}, nil)
+
+		mockedFileBackend := &mocks.FileBackend{}
+		th.App.filesBackend = mockedFileBackend
+		mockedReadCloseSeek := &mocks.ReadCloseSeeker{}
+		readerFunc := func(path string) filestore.ReadCloseSeeker {
+			return mockedReadCloseSeek
+		}
+
+		readerErrorFunc := func(path string) error {
+			return nil
+		}
+		mockedFileBackend.On("Reader", "teamID/boardID/7fileInfoID.txt").Return(readerFunc, readerErrorFunc)
+		mockedFileBackend.On("FileExists", "teamID/boardID/7fileInfoID.txt").Return(true, nil)
+
+		fileInfo, seeker, err := th.App.GetFile("teamID", "boardID", "7fileInfoID.txt")
+		assert.NoError(t, err)
+		assert.NotNil(t, fileInfo)
+		assert.NotNil(t, seeker)
 	})
 }

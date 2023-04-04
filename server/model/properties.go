@@ -1,6 +1,8 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+//go:generate mockgen -destination=mocks/propValueResolverMock.go -package mocks . PropValueResolver
+
 package model
 
 import (
@@ -91,9 +93,38 @@ func (pd PropDef) GetValue(v interface{}, resolver PropValueResolver) (string, e
 			if err != nil {
 				return "", err
 			}
+			if user == nil {
+				return userID, nil
+			}
 			return user.Username, nil
 		}
 		return userID, nil
+
+	case "multiPerson":
+		// v is a slice of user IDs
+		userIDs, ok := v.([]interface{})
+		if !ok {
+			return "", fmt.Errorf("multiPerson property type: %w", ErrInvalidPropertyValueType)
+		}
+		if resolver != nil {
+			usernames := make([]string, len(userIDs))
+
+			for i, userIDInterface := range userIDs {
+				userID := userIDInterface.(string)
+
+				user, err := resolver.GetUserByID(userID)
+				if err != nil {
+					return "", err
+				}
+				if user == nil {
+					usernames[i] = userID
+				} else {
+					usernames[i] = user.Username
+				}
+			}
+
+			return strings.Join(usernames, ", "), nil
+		}
 
 	case "multiSelect":
 		// v is a slice of strings containing option ids
@@ -144,30 +175,10 @@ func (pd PropDef) ParseDate(s string) (string, error) {
 // schema for all cards within the board.
 // The result is provided as a map for quick lookup, and the original order is
 // preserved via the `Index` field.
-func ParsePropertySchema(board *Block) (PropSchema, error) {
-	if board == nil || board.Type != TypeBoard {
-		return nil, ErrInvalidBoardBlock
-	}
-
+func ParsePropertySchema(board *Board) (PropSchema, error) {
 	schema := make(map[string]PropDef)
 
-	// cardProperties contains a slice of maps (untyped at this point).
-	cardPropsIface, ok := board.Fields["cardProperties"]
-	if !ok {
-		return schema, nil
-	}
-
-	cardProps, ok := cardPropsIface.([]interface{})
-	if !ok || len(cardProps) == 0 {
-		return schema, nil
-	}
-
-	for i, cp := range cardProps {
-		prop, ok := cp.(map[string]interface{})
-		if !ok {
-			return nil, ErrInvalidPropSchema
-		}
-
+	for i, prop := range board.CardProperties {
 		pd := PropDef{
 			ID:      getMapString("id", prop),
 			Index:   i,

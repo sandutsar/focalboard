@@ -12,28 +12,28 @@ let activeThemeName: string
 import {UserSettings} from './userSettings'
 
 export type Theme = {
-    mainBg: string,
-    mainFg: string,
-    buttonBg: string,
-    buttonFg: string,
-    sidebarBg: string,
-    sidebarFg: string,
-    sidebarTextActiveBorder: string,
-    sidebarWhiteLogo: string,
+    mainBg: string
+    mainFg: string
+    buttonBg: string
+    buttonFg: string
+    sidebarBg: string
+    sidebarFg: string
+    sidebarTextActiveBorder: string
+    sidebarWhiteLogo: string
 
-    link: string,
-    linkVisited: string,
+    link: string
+    linkVisited: string
 
-    propDefault: string,
-    propGray: string,
-    propBrown: string,
-    propOrange: string,
-    propYellow: string,
-    propGreen: string,
-    propBlue: string,
-    propPurple: string,
-    propPink: string,
-    propRed: string,
+    propDefault: string
+    propGray: string
+    propBrown: string
+    propOrange: string
+    propYellow: string
+    propGreen: string
+    propBlue: string
+    propPurple: string
+    propPink: string
+    propRed: string
 }
 
 export const systemThemeName = 'system-theme'
@@ -47,10 +47,10 @@ export const defaultTheme = {
     buttonFg: '255, 255, 255',
     sidebarBg: '30, 50, 92',
     sidebarFg: '255, 255, 255',
-    sidebarTextActiveBorder: '#5d89ea',
+    sidebarTextActiveBorder: '93, 137, 243',
     sidebarWhiteLogo: 'true',
 
-    link: '#0000ee',
+    link: '93, 137, 234',
     linkVisited: '#551a8b',
 
     propDefault: '#fff',
@@ -76,7 +76,7 @@ export const darkTheme = {
     buttonFg: '255, 255, 255',
     sidebarBg: '75, 73, 67',
     sidebarFg: '255, 255, 255',
-    sidebarTextActiveBorder: '#66b9a7',
+    sidebarTextActiveBorder: '102, 185, 167',
     sidebarWhiteLogo: 'true',
 
     link: '#0090ff',
@@ -105,7 +105,7 @@ export const lightTheme = {
     buttonFg: '255, 255, 255',
     sidebarBg: '247, 246, 243',
     sidebarFg: '55, 53, 47',
-    sidebarTextActiveBorder: '#579eff',
+    sidebarTextActiveBorder: '87, 158, 255',
     sidebarWhiteLogo: 'false',
 }
 
@@ -124,7 +124,35 @@ export function setTheme(theme: Theme | null): Theme {
 
     setActiveThemeName(consolidatedTheme, theme)
 
-    if (!Utils.isFocalboardPlugin()) {
+    if (Utils.isFocalboardPlugin()) {
+        // in plugin mode, Focalbaord reuses Mattermost's color pallet, so we don't really need to
+        // set the color variables here because in the app, Mattermost webapp would have already
+        // declared them.
+        // But,
+        // when testing the plugin mode in Jest unit test,
+        // since there is no Mattermost webapp, we need to ensure someone declares the variables.
+        // So here we set the variable if it wasn't already declared.
+        // In plugins, since Mattermost webapp renders always before the plugin/product,
+        // the variables are guaranteed to be set there.
+        //
+        // Fun fact - in a Jest test suite, if there are some non-plugin tests and a few plugin tests,
+        // if a non-plugin test ran first, it creates the variables in document, which is somehow
+        // shared to other tests as well. That's why the tests don't fail unless you run ONLY
+        // a plugin test.
+
+        const style = document.documentElement.style
+
+        style.setProperty('--center-channel-bg-rgb', style.getPropertyValue('--center-channel-bg-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--center-channel-color-rgb', style.getPropertyValue('--center-channel-color-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--button-bg-rgb', style.getPropertyValue('--button-bg-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--button-color-rgb', style.getPropertyValue('--button-color-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--sidebar-bg-rgb', style.getPropertyValue('--sidebar-bg-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--sidebar-text-rgb', style.getPropertyValue('--sidebar-text-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--link-color-rgb', style.getPropertyValue('--link-color-rgb') || consolidatedTheme.mainBg)
+        style.setProperty('--sidebar-text-active-border-rgb', style.getPropertyValue('--sidebar-text-active-border-rgb') || consolidatedTheme.mainBg)
+    } else {
+        // for personal server and desktop, Focalboard is responsible for managing the theme,
+        // so we set all the color variables here.
         document.documentElement.style.setProperty('--center-channel-bg-rgb', consolidatedTheme.mainBg)
         document.documentElement.style.setProperty('--center-channel-color-rgb', consolidatedTheme.mainFg)
         document.documentElement.style.setProperty('--button-bg-rgb', consolidatedTheme.buttonBg)
@@ -132,7 +160,7 @@ export function setTheme(theme: Theme | null): Theme {
         document.documentElement.style.setProperty('--sidebar-bg-rgb', consolidatedTheme.sidebarBg)
         document.documentElement.style.setProperty('--sidebar-text-rgb', consolidatedTheme.sidebarFg)
         document.documentElement.style.setProperty('--link-color-rgb', consolidatedTheme.link)
-        document.documentElement.style.setProperty('--sidebar-text-active-border', consolidatedTheme.sidebarTextActiveBorder)
+        document.documentElement.style.setProperty('--sidebar-text-active-border-rgb', consolidatedTheme.sidebarTextActiveBorder)
     }
 
     document.documentElement.style.setProperty('--sidebar-white-logo', consolidatedTheme.sidebarWhiteLogo)
@@ -183,7 +211,7 @@ export function setMattermostTheme(theme: any): Theme {
     document.documentElement.style.setProperty('--sidebar-bg-rgb', color(theme.sidebarBg).rgb().array().join(', '))
     document.documentElement.style.setProperty('--sidebar-text-rgb', color(theme.sidebarText).rgb().array().join(', '))
     document.documentElement.style.setProperty('--link-color-rgb', theme.linkColor)
-    document.documentElement.style.setProperty('--sidebar-text-active-border', color(theme.sidebarTextActiveBorder).rgb().array().join(', '))
+    document.documentElement.style.setProperty('--sidebar-text-active-border-rgb', color(theme.sidebarTextActiveBorder).rgb().array().join(', '))
 
     return setTheme({
         ...defaultTheme,

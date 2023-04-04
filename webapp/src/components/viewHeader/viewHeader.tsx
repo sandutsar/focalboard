@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 import React, {useState, useEffect} from 'react'
-import {FormattedMessage} from 'react-intl'
+import {FormattedMessage, useIntl} from 'react-intl'
 
 import ViewMenu from '../../components/viewMenu'
 import mutator from '../../mutator'
@@ -15,6 +15,28 @@ import MenuWrapper from '../../widgets/menuWrapper'
 import Editable from '../../widgets/editable'
 
 import ModalWrapper from '../modalWrapper'
+
+import {useAppSelector} from '../../store/hooks'
+import {Permission} from '../../constants'
+import {useHasCurrentBoardPermissions} from '../../hooks/permissions'
+import {
+    getOnboardingTourCategory,
+    getOnboardingTourStarted,
+    getOnboardingTourStep,
+} from '../../store/users'
+import {
+    BoardTourSteps,
+    TOUR_BOARD,
+    TourCategoriesMapToSteps,
+} from '../onboardingTour'
+import {OnboardingBoardTitle} from '../cardDetail/cardDetail'
+import AddViewTourStep from '../onboardingTour/addView/add_view'
+import {getCurrentCard} from '../../store/cards'
+import BoardPermissionGate from '../permissions/boardPermissionGate'
+
+import {getLimits} from '../../store/limits'
+import {LimitUnlimited} from '../../boardCloudLimits'
+import ViewLimitModalWrapper from '../viewLImitDialog/viewLimitDialogWrapper'
 
 import NewCardButton from './newCardButton'
 import ViewHeaderPropertiesMenu from './viewHeaderPropertiesMenu'
@@ -38,14 +60,16 @@ type Props = {
     addCardTemplate: () => void
     editCardTemplate: (cardTemplateId: string) => void
     readonly: boolean
-    showShared: boolean
     dateDisplayProperty?: IPropertyTemplate
 }
 
-const ViewHeader = React.memo((props: Props) => {
+const ViewHeader = (props: Props) => {
     const [showFilter, setShowFilter] = useState(false)
+    const [lockFilterOnClose, setLockFilterOnClose] = useState(false)
+    const intl = useIntl()
+    const canEditBoardProperties = useHasCurrentBoardPermissions([Permission.ManageBoardProperties])
 
-    const {board, activeView, views, groupByProperty, cards, showShared, dateDisplayProperty} = props
+    const {board, activeView, views, groupByProperty, cards, dateDisplayProperty} = props
 
     const withGroupBy = activeView.fields.viewType === 'board' || activeView.fields.viewType === 'table'
     const withDisplayBy = activeView.fields.viewType === 'calendar'
@@ -59,68 +83,125 @@ const ViewHeader = React.memo((props: Props) => {
 
     const hasFilter = activeView.fields.filter && activeView.fields.filter.filters?.length > 0
 
+    const isOnboardingBoard = props.board.title === OnboardingBoardTitle
+    const onboardingTourStarted = useAppSelector(getOnboardingTourStarted)
+    const onboardingTourCategory = useAppSelector(getOnboardingTourCategory)
+    const onboardingTourStep = useAppSelector(getOnboardingTourStep)
+
+    const currentCard = useAppSelector(getCurrentCard)
+    const noCardOpen = !currentCard
+
+    const showTourBaseCondition = isOnboardingBoard &&
+        onboardingTourStarted &&
+        noCardOpen &&
+        onboardingTourCategory === TOUR_BOARD &&
+        onboardingTourStep === BoardTourSteps.ADD_VIEW.toString()
+
+    const [delayComplete, setDelayComplete] = useState(false)
+
+    useEffect(() => {
+        if (showTourBaseCondition) {
+            setTimeout(() => {
+                setDelayComplete(true)
+            }, 800)
+        }
+    }, [showTourBaseCondition])
+
+    useEffect(() => {
+        if (!BoardTourSteps.SHARE_BOARD) {
+            BoardTourSteps.SHARE_BOARD = 2
+        }
+
+        TourCategoriesMapToSteps[TOUR_BOARD] = BoardTourSteps
+    }, [])
+
+    const showAddViewTourStep = showTourBaseCondition && delayComplete
+
+    const [showViewLimitDialog, setShowViewLimitDialog] = useState<boolean>(false)
+
+    const limits = useAppSelector(getLimits)
+
+    const allowCreateView = (): boolean => {
+        if (limits && (limits.views === LimitUnlimited || views.length < limits.views)) {
+            setShowViewLimitDialog(false)
+            return true
+        }
+
+        setShowViewLimitDialog(true)
+        return false
+    }
+
     return (
         <div className='ViewHeader'>
-            <Editable
-                value={viewTitle}
-                placeholderText='Untitled View'
-                onSave={(): void => {
-                    mutator.changeTitle(activeView.id, activeView.title, viewTitle)
-                }}
-                onCancel={(): void => {
-                    setViewTitle(activeView.title)
-                }}
-                onChange={setViewTitle}
-                saveOnEsc={true}
-                readonly={props.readonly}
-                spellCheck={true}
-                autoExpand={false}
-            />
-            <MenuWrapper>
-                <IconButton icon={<DropdownIcon/>}/>
-                <ViewMenu
-                    board={board}
-                    activeView={activeView}
-                    views={views}
-                    readonly={props.readonly}
+            <div className='viewSelector'>
+                <Editable
+                    value={viewTitle}
+                    placeholderText='Untitled View'
+                    onSave={(): void => {
+                        mutator.changeBlockTitle(activeView.boardId, activeView.id, activeView.title, viewTitle)
+                    }}
+                    onCancel={(): void => {
+                        setViewTitle(activeView.title)
+                    }}
+                    onChange={setViewTitle}
+                    saveOnEsc={true}
+                    readonly={props.readonly || !canEditBoardProperties}
+                    spellCheck={true}
+                    autoExpand={false}
                 />
-            </MenuWrapper>
+                {!props.readonly && (<div>
+                    <MenuWrapper label={intl.formatMessage({id: 'ViewHeader.view-menu', defaultMessage: 'View menu'})}>
+                        <IconButton icon={<DropdownIcon/>}/>
+                        <ViewMenu
+                            board={board}
+                            activeView={activeView}
+                            views={views}
+                            readonly={props.readonly || !canEditBoardProperties}
+                            allowCreateView={allowCreateView}
+                        />
+                    </MenuWrapper>
+                    {showAddViewTourStep && <AddViewTourStep/>}
+                </div>)}
+
+            </div>
 
             <div className='octo-spacer'/>
 
-            {!props.readonly &&
+            {!props.readonly && canEditBoardProperties &&
             <>
                 {/* Card properties */}
 
                 <ViewHeaderPropertiesMenu
-                    properties={board.fields.cardProperties}
+                    properties={board.cardProperties}
                     activeView={activeView}
                 />
 
                 {/* Group by */}
 
                 {withGroupBy &&
-                    <ViewHeaderGroupByMenu
-                        properties={board.fields.cardProperties}
-                        activeView={activeView}
-                        groupByProperty={groupByProperty}
-                    />}
+                <ViewHeaderGroupByMenu
+                    properties={board.cardProperties}
+                    activeView={activeView}
+                    groupByProperty={groupByProperty}
+                />}
 
                 {/* Display by */}
 
                 {withDisplayBy &&
-                    <ViewHeaderDisplayByMenu
-                        properties={board.fields.cardProperties}
-                        activeView={activeView}
-                        dateDisplayPropertyName={dateDisplayProperty?.name}
-                    />}
+                <ViewHeaderDisplayByMenu
+                    properties={board.cardProperties}
+                    activeView={activeView}
+                    dateDisplayPropertyName={dateDisplayProperty?.name}
+                />}
 
                 {/* Filter */}
 
                 <ModalWrapper>
                     <Button
                         active={hasFilter}
-                        onClick={() => setShowFilter(true)}
+                        onClick={() => setShowFilter(!showFilter)}
+                        onMouseOver={() => setLockFilterOnClose(true)}
+                        onMouseLeave={() => setLockFilterOnClose(false)}
                     >
                         <FormattedMessage
                             id='ViewHeader.filter'
@@ -131,18 +212,22 @@ const ViewHeader = React.memo((props: Props) => {
                     <FilterComponent
                         board={board}
                         activeView={activeView}
-                        onClose={() => setShowFilter(false)}
+                        onClose={() => {
+                            if (!lockFilterOnClose) {
+                                setShowFilter(false)
+                            }
+                        }}
                     />}
                 </ModalWrapper>
 
                 {/* Sort */}
 
                 {withSortBy &&
-                    <ViewHeaderSortMenu
-                        properties={board.fields.cardProperties}
-                        activeView={activeView}
-                        orderedCards={cards}
-                    />
+                <ViewHeaderSortMenu
+                    properties={board.cardProperties}
+                    activeView={activeView}
+                    orderedCards={cards}
+                />
                 }
             </>
             }
@@ -159,21 +244,26 @@ const ViewHeader = React.memo((props: Props) => {
                     board={board}
                     activeView={activeView}
                     cards={cards}
-                    showShared={showShared}
                 />
 
                 {/* New card button */}
 
-                <NewCardButton
-                    addCard={props.addCard}
-                    addCardFromTemplate={props.addCardFromTemplate}
-                    addCardTemplate={props.addCardTemplate}
-                    editCardTemplate={props.editCardTemplate}
-                />
-            </>
-            }
+                <BoardPermissionGate permissions={[Permission.ManageBoardCards]}>
+                    <NewCardButton
+                        addCard={props.addCard}
+                        addCardFromTemplate={props.addCardFromTemplate}
+                        addCardTemplate={props.addCardTemplate}
+                        editCardTemplate={props.editCardTemplate}
+                    />
+                </BoardPermissionGate>
+            </>}
+
+            <ViewLimitModalWrapper
+                show={showViewLimitDialog}
+                onClose={() => setShowViewLimitDialog(false)}
+            />
         </div>
     )
-})
+}
 
-export default ViewHeader
+export default React.memo(ViewHeader)
